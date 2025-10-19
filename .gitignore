@@ -5,6 +5,7 @@ __pycache__/
 
 # C extensions
 *.so
+*.o
 
 # Distribution / packaging
 .Python
@@ -221,6 +222,12 @@ env/
 
 # macOS
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
 
 # IDE
 .vscode/
@@ -229,3 +236,54 @@ env/
 # Others
 *.sqlite3
 *.db
+
+# Compiled source #
+###################
+*.o
+*.so
+
+# Packages #
+############
+# it's better to unpack these files and commit the raw source
+# git has its own built in compression methods
+*.7z
+*.dmg
+*.gz
+*.iso
+*.jar
+*.rar
+*.tar
+*.zip
+*.mtl
+
+
+# OS generated files #
+######################
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# 3D data #
+############
+*.mat
+# *.pkl
+# *.obj
+*.dat
+*.npz
+
+# python file #
+############
+*.pyc
+__pycache__
+build
+
+# pixie data
+###
+*.obj
+*.yaml
+*.pkl
+*.npy
