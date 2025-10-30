@@ -17,55 +17,54 @@ export interface Photos {
 
 export interface ProcessingState {
   sessionId: string | null;
+  backendSessionId: string | null;
   status: AnalysisStatus;
   progress: number;
   currentStep: string;
 }
 
-export interface Measurement {
-  id: string;
-  session_id: string;
-  measurement_type: string;
-  value: number;
-  reference_min: number | null;
-  reference_max: number | null;
-  created_at: string;
-}
-
+// Backend response types
 export interface BodyComposition {
-  id: string;
-  session_id: string;
-  body_fat_percentage: number | null;
-  lean_mass: number | null;
-  fat_mass: number | null;
-  bmi: number | null;
-  body_type: string | null;
-  created_at: string;
+  body_fat_percentage: number;
+  fat_mass_kg: number;
+  lean_mass_kg: number;
+  muscle_mass_kg: number;
+  bmi: number;
+  volume_liters: number;
+  body_density: number;
 }
 
-export interface SessionImage {
-  id: string;
-  session_id: string;
-  image_type: string;
-  image_url: string;
-  created_at: string;
+export interface HealthMetrics {
+  waist_to_hip_ratio: number;
+  health_status: {
+    category: 'Athletic' | 'Fit' | 'Acceptable' | 'Obese';
+    risk_level: 'Low' | 'Moderate' | 'High';
+    recommendation: string;
+  };
 }
 
 export interface AnalysisResult {
-  session: {
-    id: string;
-    user_height: number;
-    user_weight: number;
-    user_age: number;
-    user_gender: string;
-    status: string;
-    progress: number;
-    current_step: string | null;
-    created_at: string;
-    updated_at: string;
-    completed_at: string | null;
+  sessionId: string;
+  status: string;
+  timestamp: string;
+  measurements: {
+    neck: number;
+    chest: number;
+    abdomen: number;
+    waist: number;
+    hip: number;
+    thigh: number;
+    knee: number;
+    ankle: number;
+    shoulder_width: number;
+    calf: number;
   };
-  measurements: Measurement[];
-  bodyComposition: BodyComposition | null;
-  images: SessionImage[];
+  bodyComposition: BodyComposition;
+  healthMetrics: HealthMetrics;
+  images: {
+    front: string;
+    side: string;
+    back: string;
+    mesh: string;
+  };
 }

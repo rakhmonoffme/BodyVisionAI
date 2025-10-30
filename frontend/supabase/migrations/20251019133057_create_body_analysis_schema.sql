@@ -60,6 +60,12 @@ ALTER TABLE analysis_sessions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE measurements ENABLE ROW LEVEL SECURITY;
 ALTER TABLE body_composition ENABLE ROW LEVEL SECURITY;
 ALTER TABLE session_images ENABLE ROW LEVEL SECURITY;
+ALTER TABLE analysis_sessions ADD COLUMN backend_session_id TEXT;
+ALTER TABLE measurements ADD COLUMN IF NOT EXISTS backend_session_id TEXT;
+ALTER TABLE body_composition ADD COLUMN IF NOT EXISTS backend_session_id TEXT;
+ALTER TABLE session_images  ADD COLUMN IF NOT EXISTS backend_session_id TEXT;
+ALTER TABLE analysis_sessions
+ADD COLUMN IF NOT EXISTS backend_session_id TEXT;
 
 CREATE POLICY "Allow public insert on analysis_sessions"
   ON analysis_sessions FOR INSERT

@@ -2,7 +2,7 @@
 
 import { create } from 'zustand';
 import { Photos, UserInfo, ProcessingState, AnalysisResult, PhotoType } from '@/types';
-import { createAnalysisSession, simulateAnalysis } from '@/lib/api';
+import { submitAnalysis } from '@/lib/api';
 
 interface AppStore {
   photos: Photos;
@@ -24,6 +24,7 @@ const initialUserInfo: UserInfo = {
 
 const initialProcessing: ProcessingState = {
   sessionId: null,
+  backendSessionId: null,
   status: 'idle',
   progress: 0,
   currentStep: '',
@@ -58,47 +59,85 @@ export const useAppStore = create<AppStore>((set, get) => ({
   },
 
   submitAnalysis: async () => {
-    const { userInfo } = get();
-
-    set((state) => ({
-      processing: {
-        ...state.processing,
-        status: 'uploading',
-        progress: 0,
-        currentStep: 'Creating session...',
-      },
-    }));
-
+    const { photos, userInfo } = get();
+    
+    if (!photos.front || !photos.side || !photos.back) {
+      throw new Error('All photos required');
+    }
+    
+    set({ 
+      processing: { 
+        sessionId: null,
+        backendSessionId: null,
+        status: 'processing', 
+        progress: 0, 
+        currentStep: 'Uploading photos...' 
+      } 
+    });
+    
+    // Simulate progress stages
+    const progressStages = [
+      { delay: 3000, progress: 15, step: 'Processing front view...' },
+      { delay: 6000, progress: 30, step: 'Processing side view...' },
+      { delay: 9000, progress: 45, step: 'Processing back view...' },
+      { delay: 15000, progress: 60, step: 'Extracting body measurements...' },
+      { delay: 25000, progress: 75, step: 'Generating 3D body model...' },
+      { delay: 35000, progress: 90, step: 'Calculating body composition...' },
+    ];
+    
+    // Set up progress simulation
+    const timers: NodeJS.Timeout[] = [];
+    progressStages.forEach(({ delay, progress, step }) => {
+      const timer = setTimeout(() => {
+        const currentState = get().processing;
+        if (currentState.status === 'processing') {
+          set({
+            processing: {
+              ...currentState,
+              progress,
+              currentStep: step,
+            },
+          });
+        }
+      }, delay);
+      timers.push(timer);
+    });
+    
     try {
-      const sessionId = await createAnalysisSession(userInfo);
-
-      set((state) => ({
+      // Direct call to Flask backend (30-60 seconds)
+      const result = await submitAnalysis(
+        photos as { front: File; side: File; back: File },
+        userInfo
+      );
+      
+      // Clear all timers
+      timers.forEach(timer => clearTimeout(timer));
+      
+      // Store results immediately
+      set({
         processing: {
-          ...state.processing,
-          sessionId,
-          status: 'processing',
-          currentStep: 'Starting analysis...',
-        },
-      }));
-
-      await simulateAnalysis(sessionId);
-
-      set((state) => ({
-        processing: {
-          ...state.processing,
+          sessionId: result.sessionId,
+          backendSessionId: result.sessionId,
           status: 'completed',
           progress: 100,
+          currentStep: 'Analysis complete!',
         },
-      }));
+        results: result,
+      });
     } catch (error) {
-      console.error('Analysis failed:', error);
-      set((state) => ({
+      // Clear all timers
+      timers.forEach(timer => clearTimeout(timer));
+      
+      set({
         processing: {
-          ...state.processing,
+          sessionId: null,
+          backendSessionId: null,
           status: 'error',
-          currentStep: 'Analysis failed. Please try again.',
+          progress: 0,
+          currentStep: error instanceof Error ? error.message : 'Analysis failed',
         },
-      }));
+      });
+      throw error;
     }
   },
 

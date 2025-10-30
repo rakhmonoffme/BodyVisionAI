@@ -280,10 +280,10 @@ class SMPLXFitter:
         else:
             measurements['hip'] = 95.0
         
-        # THIGH - midpoint hip-knee
-        thigh_y = (left_hip[1] + left_knee[1]) / 2
+        # THIGH - proximal thigh (20% down from hip, at gluteal fold region)
+        thigh_y = left_hip[1] + (left_knee[1] - left_hip[1]) * 0.20
         thigh_width, thigh_depth = self._measure_limb_at_height(
-            vertices, thigh_y, left_hip[0], radius=0.075, tolerance=0.02
+            vertices, thigh_y, left_hip[0], radius=0.085, tolerance=0.025
         )
         
         if thigh_width > 0 and thigh_depth > 0:
@@ -511,7 +511,8 @@ def calculate_body_volume_from_photos(
     measurements: Optional[Dict[str, float]] = None,
     model_dir: str = './backend/models',
     output_dir: str = './backend/artifacts/3d_mesh',
-    export_mesh: bool = True
+    export_mesh: bool = True,
+    session_id: str = None
 ) -> Dict:
     """
     Calculate body volume and density from 3 photos using SMPL-X model.
@@ -552,13 +553,28 @@ def calculate_body_volume_from_photos(
     else:
         logger.info(f"  ✓ Density within normal range")
     
+    # Calculate final mesh measurements from optimized model
+    betas_torch = torch.tensor(betas.reshape(1, -1), dtype=torch.float32)
+    output = model(betas=betas_torch, return_verts=True)
+    vertices = output.vertices.detach().cpu().numpy()[0]
+    joints = output.joints.detach().cpu().numpy()[0]
+    mesh_measurements = fitter.calculate_mesh_measurements(vertices, joints)
+    
+    logger.info(f"\n✓ Final measurements: Chest={mesh_measurements.get('chest', 0):.1f}cm, "
+               f"Abdomen={mesh_measurements.get('abdomen', 0):.1f}cm, "
+               f"Thigh={mesh_measurements.get('thigh', 0):.1f}cm")
+    
     mesh_path = None
     if export_mesh:
-        mesh_path = str(Path(output_dir) / f"body_mesh_{gender}.obj")
+        # Use session_id if provided, otherwise fallback to gender-based name
+        if session_id:
+            mesh_filename = f"{session_id}_mesh.obj"
+        else:
+            mesh_filename = f"body_mesh_{gender}.obj"
+        
+        mesh_path = str(Path(output_dir) / mesh_filename)
         mesh.export(mesh_path)
-        logger.info(f"\n✓ Mesh: {mesh_path}")
-    
-    logger.info("="*60)
+        logger.info(f"\nâœ… Mesh: {mesh_path}")
     
     return {
         'volume_liters': volume_liters,
@@ -566,6 +582,7 @@ def calculate_body_volume_from_photos(
         'is_watertight': mesh.is_watertight,
         'mesh_path': mesh_path,
         'beta_parameters': betas.tolist(),
+        'mesh_measurements': mesh_measurements,
         'method': 'SMPLX_CleanMeasurements'
     }
 

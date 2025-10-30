@@ -36,8 +36,14 @@ export default function AnalyzePage() {
   const handleSubmit = async () => {
     if (!canSubmit) return;
 
-    await submitAnalysis();
+    // Navigate to processing page IMMEDIATELY
     router.push('/processing');
+    
+    // Start analysis in background (don't await)
+    submitAnalysis().catch((error) => {
+      console.error('Analysis failed:', error);
+      // Processing page will handle the error state
+    });
   };
 
   const renderStep = () => {

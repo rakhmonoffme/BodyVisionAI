@@ -43,7 +43,6 @@
     "@types/node": "20.6.2",
     "@types/react": "18.2.22",
     "@types/react-dom": "18.2.7",
-    "@types/three": "^0.180.0",
     "autoprefixer": "10.4.15",
     "axios": "^1.12.2",
     "class-variance-authority": "^0.7.0",
@@ -76,5 +75,8 @@
     "vaul": "^0.9.9",
     "zod": "^3.23.8",
     "zustand": "^5.0.8"
+  },
+  "devDependencies": {
+    "@types/three": "^0.180.0"
   }
 }

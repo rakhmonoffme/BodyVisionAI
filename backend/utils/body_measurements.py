@@ -31,7 +31,8 @@ class BodyCircumferenceEstimator:
             return None
     
     def estimate(self, front_img_path: str, side_img_path: str, 
-                 back_img_path: str, height_cm: float) -> BodyMeasurements:
+                back_img_path: str, height_cm: float, 
+                output_dir: str = None, session_id: str = None) -> BodyMeasurements:
         
         # Read images with error handling
         front_img = cv2.imread(front_img_path)
@@ -65,9 +66,9 @@ class BodyCircumferenceEstimator:
         )
         
         self._visualize(front_img, side_img, back_img,
-                       front_mask, side_mask, back_mask,
-                       front_lm, side_lm, back_lm,
-                       measurements)
+                    front_mask, side_mask, back_mask,
+                    front_lm, side_lm, back_lm,
+                    measurements, output_dir, session_id)
         
         return measurements
     
@@ -318,6 +319,7 @@ class BodyCircumferenceEstimator:
         left_hip = front_lm.get(23) if front_lm else None
         right_hip = front_lm.get(24) if front_lm else None
         left_knee = front_lm.get(25) if front_lm else None
+        right_knee = front_lm.get(26) if front_lm else None
         
         if left_shoulder and right_shoulder:
             torso_center_x = (left_shoulder[0] + right_shoulder[0]) // 2
@@ -358,18 +360,19 @@ class BodyCircumferenceEstimator:
         else:
             hip = 98.0
         
-        # THIGH
-        if left_hip and left_knee:
-            thigh_y = (left_hip[1] + left_knee[1]) // 2
-            thigh_x = left_hip[0]
+        # THIGH - RIGHT leg at 30% down from hip
+        if right_hip and right_knee:
+            thigh_y = int(right_hip[1] + (right_knee[1] - right_hip[1]) * 0.30)
+            thigh_x = right_hip[0]
             _, _, thigh_width_px = self._get_contiguous_width(front_mask, thigh_y, thigh_x)
             thigh_width_cm = thigh_width_px * front_scale
             
-            _, _, thigh_depth_px = self._get_contiguous_width(side_mask, int(h_side * 0.63), w_side // 2)
+            # Side view depth measurement at corresponding position (56% of image height for 30%)
+            _, _, thigh_depth_px = self._get_contiguous_width(side_mask, int(h_side * 0.56), w_side // 2)
             thigh_depth_cm = thigh_depth_px * side_scale
             thigh = ellipse_circumference(thigh_width_cm, thigh_depth_cm)
         else:
-            thigh = 52.0
+            thigh = 54.0
         
         # KNEE
         if left_knee:
@@ -415,10 +418,10 @@ class BodyCircumferenceEstimator:
         )
     
     def _visualize(self, front_img, side_img, back_img,
-                   front_mask, side_mask, back_mask,
-                   front_lm, side_lm, back_lm,
-                   measurements):
-        
+                front_mask, side_mask, back_mask,
+                front_lm, side_lm, back_lm,
+                measurements, output_dir=None, session_id=None):
+            
         colors = {
             'neck': (255, 100, 100),
             'shoulder': (100, 150, 255),
@@ -457,7 +460,9 @@ class BodyCircumferenceEstimator:
             left_shoulder = front_lm.get(11)
             right_shoulder = front_lm.get(12)
             left_hip = front_lm.get(23)
+            right_hip = front_lm.get(24)
             left_knee = front_lm.get(25)
+            right_knee = front_lm.get(26)
             left_ankle = front_lm.get(27)
             
             torso_center_x = (left_shoulder[0] + right_shoulder[0]) // 2 if left_shoulder and right_shoulder else front_mask.shape[1] // 2
@@ -499,10 +504,10 @@ class BodyCircumferenceEstimator:
                 x1, x2, _ = self._measure_torso_width(front_mask, hip_y, torso_center_x)
                 draw_line(front_vis, hip_y, x1, x2, f"Hip {measurements.hip}cm", colors['hip'])
             
-            # Thigh
-            if left_hip and left_knee:
-                thigh_y = (left_hip[1] + left_knee[1]) // 2
-                thigh_x = left_hip[0]
+            # Thigh - RIGHT leg at 30% down from hip
+            if right_hip and right_knee:
+                thigh_y = int(right_hip[1] + (right_knee[1] - right_hip[1]) * 0.30)
+                thigh_x = right_hip[0]
                 x1, x2, _ = self._get_contiguous_width(front_mask, thigh_y, thigh_x)
                 draw_line(front_vis, thigh_y, x1, x2, f"Thigh {measurements.thigh}cm", colors['thigh'])
             
@@ -520,14 +525,50 @@ class BodyCircumferenceEstimator:
                 x1, x2, _ = self._get_contiguous_width(front_mask, calf_y, calf_x, search_range=8)
                 draw_line(front_vis, calf_y, x1, x2, f"Calf {measurements.calf}cm", colors['calf'])
         
-        for img, title in [(front_vis, "FRONT"), (side_vis, "SIDE")]:
+        # Visualize back view
+        back_vis = cv2.addWeighted(back_img, 0.7, cv2.cvtColor(back_mask, cv2.COLOR_GRAY2BGR), 0.3, 0)
+        draw_landmarks(back_vis, back_lm)
+        
+        if back_lm:
+            left_shoulder_back = back_lm.get(11)
+            right_shoulder_back = back_lm.get(12)
+            left_hip_back = back_lm.get(23)
+            
+            torso_center_x_back = (left_shoulder_back[0] + right_shoulder_back[0]) // 2 if left_shoulder_back and right_shoulder_back else back_mask.shape[1] // 2
+            
+            # Abdomen from back
+            if left_shoulder_back and left_hip_back:
+                abdomen_y_back = int(left_shoulder_back[1] * 0.35 + left_hip_back[1] * 0.65)
+                x1_b, x2_b, _ = self._measure_torso_width(back_mask, abdomen_y_back, torso_center_x_back)
+                draw_line(back_vis, abdomen_y_back, x1_b, x2_b, f"Abdomen {measurements.abdomen}cm", colors['abdomen'])
+            
+            # Hip from back
+            if left_hip_back:
+                hip_y_back = left_hip_back[1]
+                x1_b, x2_b, _ = self._measure_torso_width(back_mask, hip_y_back, torso_center_x_back)
+                draw_line(back_vis, hip_y_back, x1_b, x2_b, f"Hip {measurements.hip}cm", colors['hip'])
+                
+        for img, title in [(front_vis, "FRONT"), (side_vis, "SIDE"), (back_vis, "BACK")]:
             cv2.putText(img, title, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 0), 4)
             cv2.putText(img, title, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
         
-        cv2.imwrite("front_measurements.jpg", front_vis)
-        cv2.imwrite("side_measurements.jpg", side_vis)
-        
-        print("\n✓ Visualizations saved")
+        # Save to specified directory or current directory
+        if output_dir and session_id:
+            from pathlib import Path
+            output_path = Path(output_dir)
+            output_path.mkdir(parents=True, exist_ok=True)
+            
+            cv2.imwrite(str(output_path / f"{session_id}_front_measurements.jpg"), front_vis)
+            cv2.imwrite(str(output_path / f"{session_id}_side_measurements.jpg"), side_vis)
+            cv2.imwrite(str(output_path / f"{session_id}_back_measurements.jpg"), back_vis)
+            
+            print(f"\n✅ Measurement visualizations saved to {output_dir}")
+        else:
+            cv2.imwrite("front_measurements.jpg", front_vis)
+            cv2.imwrite("side_measurements.jpg", side_vis)
+            cv2.imwrite("back_measurements.jpg", back_vis)
+            
+            print("\n✅ Visualizations saved to current directory")
 
 
 if __name__ == "__main__":
