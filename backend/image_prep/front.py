@@ -21,6 +21,7 @@ class BodyPhotoPreprocessor:
             'ankles': [27, 28],
             'feet': [29, 30, 31, 32]
         }
+    
     def preprocess(self, image: Union[str, np.ndarray], 
                    output_path: str = "processed_image.jpg",
                    view_type: str = 'front') -> Dict:
@@ -57,7 +58,7 @@ class BodyPhotoPreprocessor:
             
             # Determine contrasting background and extract body
             bg_color = self._determine_contrast_color(img, landmarks)
-            result = self._extract_body(img, landmarks, output_path, bg_color)
+            result = self._extract_body_improved(img, landmarks, output_path, bg_color)
             if result['success']:
                 result['message'] = f'Image processed successfully (background: {"light" if bg_color > 150 else "dark"})'
             
@@ -212,53 +213,120 @@ class BodyPhotoPreprocessor:
         else:
             return 128
     
-    def _extract_body(self, image: np.ndarray, landmarks: List, output_path: str, bg_color: int) -> Dict:
-        """Extract person and place on background (255=white, 128=gray for contrast)"""
+    def _extract_body_improved(self, image: np.ndarray, landmarks: List, 
+                               output_path: str, bg_color: int) -> Dict:
+        """
+        IMPROVED: Multi-stage segmentation with better mask generation
+        - Stage 1: Create better initial mask using landmarks
+        - Stage 2: Multiple GrabCut iterations
+        - Stage 3: Edge refinement with bilateral filtering
+        - Stage 4: Shadow removal
+        """
         h, w = image.shape[:2]
-        mask = np.zeros((h, w), dtype=np.uint8)
         
-        # Create mask from landmarks
-        points = [[int(lm.x * w), int(lm.y * h)] 
-                  for lm in landmarks if lm.visibility > 0.5]
+        # === STAGE 1: Better Initial Mask ===
+        # Create more accurate mask using ellipses fitted to body parts
+        initial_mask = np.zeros((h, w), dtype=np.uint8)
         
-        if len(points) < 10:
-            return {'success': False, 'message': 'Error: Cannot extract body. Ensure good lighting and visibility'}
+        # Define body segments with their landmark indices
+        body_segments = {
+            'head': [0, 7, 8],
+            'torso': [11, 12, 23, 24],
+            'left_arm': [11, 13, 15],
+            'right_arm': [12, 14, 16],
+            'left_leg': [23, 25, 27, 29, 31],
+            'right_leg': [24, 26, 28, 30, 32]
+        }
         
-        # Expanded convex hull
-        hull = cv2.convexHull(np.array(points))
-        center = hull.mean(axis=0)
-        expanded_hull = (center + (hull - center) * 1.15).astype(np.int32)
-        cv2.fillConvexPoly(mask, expanded_hull, 255)
+        # Draw filled ellipses for each body segment
+        for segment, indices in body_segments.items():
+            points = np.array([[int(landmarks[i].x * w), int(landmarks[i].y * h)] 
+                             for i in indices if landmarks[i].visibility > 0.5])
+            
+            if len(points) >= 3:
+                # Fit ellipse to points
+                if len(points) >= 5:
+                    try:
+                        ellipse = cv2.fitEllipse(points)
+                        cv2.ellipse(initial_mask, ellipse, 255, -1)
+                    except:
+                        hull = cv2.convexHull(points)
+                        cv2.fillConvexPoly(initial_mask, hull, 255)
+                else:
+                    hull = cv2.convexHull(points)
+                    cv2.fillConvexPoly(initial_mask, hull, 255)
         
-        # Refine with GrabCut
+        # Dilate mask slightly to ensure we capture edges
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15))
+        initial_mask = cv2.dilate(initial_mask, kernel, iterations=2)
+        
+        # === STAGE 2: Enhanced GrabCut ===
         try:
             bgd_model = np.zeros((1, 65), np.float64)
             fgd_model = np.zeros((1, 65), np.float64)
-            mask_gc = np.where(mask == 255, cv2.GC_PR_FGD, cv2.GC_PR_BGD).astype(np.uint8)
             
-            cv2.grabCut(image, mask_gc, None, bgd_model, fgd_model, 5, cv2.GC_INIT_WITH_MASK)
+            # Use initial mask for GrabCut
+            mask_gc = np.where(initial_mask == 255, cv2.GC_PR_FGD, cv2.GC_PR_BGD).astype(np.uint8)
+            
+            # Multiple iterations for better convergence
+            cv2.grabCut(image, mask_gc, None, bgd_model, fgd_model, 10, cv2.GC_INIT_WITH_MASK)
+            
+            # Extract final mask
             final_mask = np.where((mask_gc == cv2.GC_FGD) | (mask_gc == cv2.GC_PR_FGD), 255, 0).astype(np.uint8)
-        except:
-            final_mask = mask
+            
+        except Exception as e:
+            print(f"GrabCut failed: {e}, using initial mask")
+            final_mask = initial_mask
+        
+        # === STAGE 3: Advanced Post-Processing ===
+        
+        # Remove small noise
+        kernel_small = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        final_mask = cv2.morphologyEx(final_mask, cv2.MORPH_OPEN, kernel_small)
+        
+        # Fill holes
+        kernel_large = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15))
+        final_mask = cv2.morphologyEx(final_mask, cv2.MORPH_CLOSE, kernel_large)
+        
+        # Smooth edges with bilateral filter (preserves edges better than Gaussian)
+        final_mask = cv2.bilateralFilter(final_mask, 9, 75, 75)
+        
+        # === STAGE 4: Shadow Removal ===
+        # Convert to LAB color space for better shadow handling
+        lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+        l_channel, a, b = cv2.split(lab)
+        
+        # Apply CLAHE (Contrast Limited Adaptive Histogram Equalization) to L channel
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        l_channel_enhanced = clahe.apply(l_channel)
+        
+        # Merge channels back
+        lab_enhanced = cv2.merge([l_channel_enhanced, a, b])
+        image_enhanced = cv2.cvtColor(lab_enhanced, cv2.COLOR_LAB2BGR)
         
         # Validate extraction quality
         fg_ratio = np.sum(final_mask > 0) / (h * w)
         if fg_ratio < 0.1 or fg_ratio > 0.8:
             return {'success': False, 'message': 'Error: Background extraction failed. Use plain, contrasting background'}
         
-        # Clean and smooth mask
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-        final_mask = cv2.morphologyEx(final_mask, cv2.MORPH_CLOSE, kernel)
-        final_mask = cv2.morphologyEx(final_mask, cv2.MORPH_OPEN, kernel)
-        final_mask = cv2.GaussianBlur(final_mask, (5, 5), 0)
+        # === FINAL COMPOSITING ===
+        # Create smooth alpha blending
+        mask_float = final_mask.astype(float) / 255.0
+        mask_3ch = np.stack([mask_float] * 3, axis=-1)
         
-        # Blend onto background (white or gray)
+        # Create background
         bg = np.ones_like(image) * bg_color
-        mask_3ch = np.stack([final_mask / 255.0] * 3, axis=-1)
-        result = (image * mask_3ch + bg * (1 - mask_3ch)).astype(np.uint8)
+        
+        # Blend with enhanced image
+        result = (image_enhanced * mask_3ch + bg * (1 - mask_3ch)).astype(np.uint8)
         
         cv2.imwrite(output_path, result)
-        return {'success': True, 'output_path': output_path}
+        return {
+            'success': True, 
+            'output_path': output_path,
+            'method': 'enhanced_opencv',
+            'fg_ratio': f'{fg_ratio * 100:.1f}%'
+        }
     
     def __del__(self):
         self.pose.close()

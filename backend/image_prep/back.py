@@ -193,51 +193,84 @@ class BackViewProcessor:
             return 128
     
     def _extract_body(self, image: np.ndarray, landmarks: List, output_path: str, bg_color: int) -> Dict:
-        """Extract body and place on white background"""
+        """Extract body - improved method with ellipse fitting and shadow removal"""
         h, w = image.shape[:2]
-        mask = np.zeros((h, w), dtype=np.uint8)
         
-        points = [[int(lm.x * w), int(lm.y * h)] 
-                  for lm in landmarks if lm.visibility > 0.5]
+        # STAGE 1: Ellipse-based initial mask
+        initial_mask = np.zeros((h, w), dtype=np.uint8)
         
-        if len(points) < 10:
-            return {'success': False, 'message': 'Error: Cannot extract body. Improve lighting and visibility'}
+        body_segments = {
+            'head': [0, 7, 8],
+            'torso': [11, 12, 23, 24],
+            'left_arm': [11, 13, 15],
+            'right_arm': [12, 14, 16],
+            'left_leg': [23, 25, 27, 29, 31],
+            'right_leg': [24, 26, 28, 30, 32]
+        }
         
-        # Create hull and expand
-        hull = cv2.convexHull(np.array(points))
-        center = hull.mean(axis=0)
-        expanded_hull = (center + (hull - center) * 1.15).astype(np.int32)
-        cv2.fillConvexPoly(mask, expanded_hull, 255)
+        for segment, indices in body_segments.items():
+            points = np.array([[int(landmarks[i].x * w), int(landmarks[i].y * h)] 
+                             for i in indices if landmarks[i].visibility > 0.5])
+            
+            if len(points) >= 3:
+                if len(points) >= 5:
+                    try:
+                        ellipse = cv2.fitEllipse(points)
+                        cv2.ellipse(initial_mask, ellipse, 255, -1)
+                    except:
+                        hull = cv2.convexHull(points)
+                        cv2.fillConvexPoly(initial_mask, hull, 255)
+                else:
+                    hull = cv2.convexHull(points)
+                    cv2.fillConvexPoly(initial_mask, hull, 255)
         
-        # Refine with GrabCut
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15))
+        initial_mask = cv2.dilate(initial_mask, kernel, iterations=2)
+        
+        # STAGE 2: Enhanced GrabCut
         try:
             bgd_model = np.zeros((1, 65), np.float64)
             fgd_model = np.zeros((1, 65), np.float64)
-            mask_gc = np.where(mask == 255, cv2.GC_PR_FGD, cv2.GC_PR_BGD).astype(np.uint8)
+            mask_gc = np.where(initial_mask == 255, cv2.GC_PR_FGD, cv2.GC_PR_BGD).astype(np.uint8)
             
-            cv2.grabCut(image, mask_gc, None, bgd_model, fgd_model, 5, cv2.GC_INIT_WITH_MASK)
+            cv2.grabCut(image, mask_gc, None, bgd_model, fgd_model, 10, cv2.GC_INIT_WITH_MASK)
             final_mask = np.where((mask_gc == cv2.GC_FGD) | (mask_gc == cv2.GC_PR_FGD), 255, 0).astype(np.uint8)
         except:
-            final_mask = mask
+            final_mask = initial_mask
+        
+        # STAGE 3: Advanced post-processing
+        kernel_small = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        final_mask = cv2.morphologyEx(final_mask, cv2.MORPH_OPEN, kernel_small)
+        
+        kernel_large = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15))
+        final_mask = cv2.morphologyEx(final_mask, cv2.MORPH_CLOSE, kernel_large)
+        
+        final_mask = cv2.bilateralFilter(final_mask, 9, 75, 75)
+        
+        # STAGE 4: Shadow removal
+        lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+        l_channel, a, b = cv2.split(lab)
+        
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        l_channel_enhanced = clahe.apply(l_channel)
+        
+        lab_enhanced = cv2.merge([l_channel_enhanced, a, b])
+        image_enhanced = cv2.cvtColor(lab_enhanced, cv2.COLOR_LAB2BGR)
         
         # Quality check
         fg_ratio = np.sum(final_mask > 0) / (h * w)
         if fg_ratio < 0.1 or fg_ratio > 0.8:
             return {'success': False, 'message': 'Error: Extraction failed. Use plain, contrasting background'}
         
-        # Clean mask
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-        final_mask = cv2.morphologyEx(final_mask, cv2.MORPH_CLOSE, kernel)
-        final_mask = cv2.morphologyEx(final_mask, cv2.MORPH_OPEN, kernel)
-        final_mask = cv2.GaussianBlur(final_mask, (5, 5), 0)
+        # Final compositing
+        mask_float = final_mask.astype(float) / 255.0
+        mask_3ch = np.stack([mask_float] * 3, axis=-1)
         
-        # Contrasting background
-        contrast_bg = np.ones_like(image) * bg_color
-        mask_3ch = np.stack([final_mask / 255.0] * 3, axis=-1)
-        result = (image * mask_3ch + contrast_bg * (1 - mask_3ch)).astype(np.uint8)
+        bg = np.ones_like(image) * bg_color
+        result = (image_enhanced * mask_3ch + bg * (1 - mask_3ch)).astype(np.uint8)
         
         cv2.imwrite(output_path, result)
-        return {'success': True, 'output_path': output_path}
+        return {'success': True, 'output_path': output_path, 'method': 'enhanced_opencv'}
     
     def __del__(self):
         self.pose.close()

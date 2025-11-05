@@ -5,7 +5,7 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 
 # Start backend in background
 cd backend
-source venv/bin/activate
+
 python app.py &
 BACKEND_PID=$!
 cd ..

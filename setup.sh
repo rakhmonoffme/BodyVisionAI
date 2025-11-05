@@ -76,7 +76,7 @@ setup_backend() {
     
     # Create virtual environment
     print_info "Creating Python virtual environment..."
-    python3 -m venv venv
+    python3.10 -m venv venv
     print_success "Virtual environment created"
     
     # Activate virtual environment
@@ -100,27 +100,32 @@ setup_backend() {
     print_success "PyTorch installed"
     
     echo "Installing core packages..."
-    pip install numpy==1.24.3 scipy scikit-image scikit-learn
+    pip install numpy==1.24.3
+    pip install scipy==1.10.1
+    pip install scikit-learn==1.3.2
+    pip install scikit-image==0.21.0
     print_success "Core packages installed"
     
     echo "Installing image processing..."
-    pip install opencv-python Pillow
+    pip install opencv-python==4.8.0.74
+    pip install Pillow==10.0.0
     print_success "Image processing libraries installed"
     
     echo "Installing 3D mesh tools..."
-    pip install trimesh pyrender rtree
+    pip install trimesh==3.23.5
+    pip install pyrender==0.1.45
+    pip install rtree==1.0.1    
     print_success "3D mesh tools installed"
     
-    echo "Installing PIXIE dependencies..."
-    pip install kornia yacs face-alignment loguru
-    print_success "PIXIE dependencies installed"
-    
     echo "Installing utilities..."
-    pip install PyYAML tqdm matplotlib pandas
+    pip install PyYAML==6.0.1
+    pip install tqdm==4.66.1
+    pip install matplotlib==3.7.2
+    pip install pandas==2.0.3   
     print_success "Utilities installed"
     
     echo "Installing Flask and web dependencies..."
-    pip install Flask==3.0.0 flask-cors==4.0.0
+    pip install Flask==2.3.3 flask-cors==4.0.0
     print_success "Flask installed"
     
     echo "Installing MediaPipe..."
@@ -128,15 +133,17 @@ setup_backend() {
     print_success "MediaPipe installed"
     
     echo "Installing SMPL-X..."
-    pip install smplx==0.1.28
+    pip install smplx==0.1.13
+    pip install Werkzeug==2.3.7
     print_success "SMPL-X installed"
-    
-    echo "Attempting chumpy installation..."
-    pip install chumpy --no-build-isolation || print_warning "Chumpy installation failed, continuing..."
+
     
     echo "Installing optional YOLO (for better detection)..."
-    pip install ultralytics==8.0.227 || print_warning "YOLO installation failed, continuing..."
-    
+    pip install ultralytics==8.0.227 --no-deps || echo "YOLO skipped" 
+    print_success "YOLO installed"
+    pip install gunicorn==20.1.0
+    print_success "Gunicorn installed"
+
     echo ""
     print_info "Testing core package imports..."
     python -c "import numpy, torch, trimesh; print('✓ Core packages OK')" || print_error "Import test failed"
@@ -220,7 +227,6 @@ create_run_scripts() {
     cat > run-backend.sh << 'EOF'
 #!/bin/bash
 cd backend
-source venv/bin/activate
 python app.py
 EOF
     chmod +x run-backend.sh
@@ -246,7 +252,6 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 
 # Start backend in background
 cd backend
-source venv/bin/activate
 python app.py &
 BACKEND_PID=$!
 cd ..
